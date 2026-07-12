@@ -32,3 +32,8 @@ $ conda env create -f environment.yml
 
 ## Pre-trained WavLM Model
 Download the WavLM models from [here](https://github.com/microsoft/unilm/tree/master/wavlm) Place the downloaded weights under the wavlm folder.
+
+## Inference
+```
+$ python main.py
+```
