@@ -1,9 +1,9 @@
 # MP-VIB
 Official implementation of IEEE Access paper "Multi-Prototype Variational Information Bottleneck for SSL-Based Speech Spoofing Detection"
 
-## 数据集
+## Datasets
 
-**为了测试模型的泛化性，我们选择了目前现有的多个测试集，包含各种伪造攻击语音：TTS、VC、Codec、Diffusion、Flow- matching等**
+**To test the generalization of the model, we selected multiple existing test sets, covering various types of spoofed speech attacks, including TTS, VC, Codec, Diffusion, Flow-matching, and others.**
 - [ASVSpoof2019](https://zenodo.org/records/6906306)
 - [ASVSpoof2021LA](https://zenodo.org/records/4837263)
 - [ASVSpoof2021DF](https://zenodo.org/records/4837263)
@@ -19,7 +19,7 @@ Official implementation of IEEE Access paper "Multi-Prototype Variational Inform
 - [SONAR](https://github.com/Jessegator/SONAR)
 - [In The Wild](https://deepfake-total.com/in_the_wild)
 
-**数据增强数据集**
+**Data Augment**
 - [RIR](https://www.openslr.org/28/)
 - [MUSAN](https://openslr.elda.org/17/)
 
