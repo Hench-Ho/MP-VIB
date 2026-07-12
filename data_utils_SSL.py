@@ -13,62 +13,20 @@ from torch.utils.data import Dataset
 from torchaudio.io import AudioEffector, CodecConfig
 from MaskedSpec import MaskedSpec
 
-def load_data(protocol_path, spk_col=0, atk_col=None):
+def load_data(protocol_path):
     file_list = []
-    d_meta = {}
-
-    spk_id = {}
-    attack_id = {}
-
-    spk2idx = {}
-    atk2idx = {}
-
-    def _get_or_add(mapping, name):
-        if name not in mapping:
-            mapping[name] = len(mapping)
-        return mapping[name]
-
-    def _infer_attack(parts):
-        candidates = []
-        candidates.append(parts[-3])
-
-        # 也可能是某个固定字段，如 LA/PA, codec 等；这里尽量不乱猜：
-        for p in parts:
-            # 非常粗的过滤：跳过明显不是 attack 的字段
-            if p in ("bonafide", "spoof"):
-                continue
-            if p.startswith("utt") or p.endswith(".wav"):
-                continue
-            # 有些协议会写 "A01" "A02" 或 "CC1" 等
-            if (len(p) <= 10) and (any(c.isdigit() for c in p)) and (any(c.isalpha() for c in p)):
-                candidates.append(p)
-
-        # 去重并选一个最合理的
-        for c in candidates:
-            if c and c not in ("-", "na", "N/A"):
-                return c
-        return "unknown"
+    d_meta ={}
 
     with open(protocol_path, "r", encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split(' ')
             key = parts[1]
             label = parts[-1]
-            if label not in ["bonafide", "spoof"]:
-                raise ValueError(f"label error: {label} in line: {line}")
-
             file_list.append(key)
+            
             d_meta[key] = 1 if label == "bonafide" else 0
 
-            # -------- speaker --------
-            spk_name = parts[0]
-            spk_id[key] = _get_or_add(spk2idx, spk_name)
-
-            # -------- attack --------
-            atk_name = parts[-2]
-            attack_id[key] = _get_or_add(atk2idx, atk_name)
-
-    return file_list, d_meta, spk_id, attack_id, spk2idx, atk2idx
+    return file_list, d_meta
 
 def load_dev_data(protocol_path, base_path):
     file_list=[]
@@ -136,19 +94,15 @@ class EvalDataset(Dataset):
         return x_inp,utt_id
 
 class Dataset_ASVspoof5_train(Dataset):
-    def __init__(self, args, list_IDs, labels, spk_id, attack_id,
+    def __init__(self, args, list_IDs, labels, 
                  database, musan_path=None, rir_path=None, use_musan=True, use_rir=True):
         '''self.list_IDs	: list of strings (each string: utt key),
             self.labels      : dictionary (key: utt key, value: label integer)'''
     
         self.list_IDs = list_IDs
         self.labels = labels
-        self.spk_id = spk_id
-        self.attack_id = attack_id
         self.base_dir = database
         self.args=args
-        self.codec_aug = RandomCodecAug(p=0.5)
-        self.comp_aug = CompressionAugment(p=0.4, mp3_kbps=16, m4a_kbps=64)
         self.MaskedSpec = MaskedSpec()
         self.use_musan = use_musan
         self.use_rir = use_rir
@@ -180,8 +134,6 @@ class Dataset_ASVspoof5_train(Dataset):
     def __getitem__(self, idx):
         file_name = self.list_IDs[idx]
         label = self.labels[file_name]
-        spk   = self.spk_id[file_name]
-        atk   = self.attack_id[file_name]
         
         audio_wav, sr = load_audio_robust(os.path.join(self.base_dir, file_name+'.flac'), target_sr=16000) 
 
@@ -189,36 +141,24 @@ class Dataset_ASVspoof5_train(Dataset):
         # audio_wav = trim_silence(audio_wav, top_db=30)
         
         # RIRS and MUSAN augmentation
-        # num = random.random()
-        # if num < 0.5:
-        #     audio_wav = self.apply_augment(audio_wav)
-        
-        # # codec
-        # num = random.random()
-        # if num < 0.5:
-        #     audio_wav = np.asarray(audio_wav, dtype=np.float32)
-        #     audio_wav = self.codec_aug(audio_wav, sr)
-        
-        # # Compose
-        # num = random.random()
-        # if num < 0.5:
-        #     audio_wav = self.comp_aug(audio_wav, sr)
-        #     audio_wav = np.asarray(audio_wav, dtype=np.float32)
+        num = random.random()
+        if num < 0.5:
+            audio_wav = self.apply_augment(audio_wav)
         
         # Padding
         audio_wav = pad(audio_wav, self.cut)
         
-        # # Masked Spec
-        # num = random.random()
-        # if num < 0.5:
-        #     audio_wav = torch.from_numpy(audio_wav).float()
-        #     audio_tensor = self.MaskedSpec.spec_masking(audio_wav, masks_num = 4, f_mask = 30)
-        # else:
-        #     audio_tensor= torch.FloatTensor(audio_wav)
+        # Masked Spec
+        num = random.random()
+        if num < 0.5:
+            audio_wav = torch.from_numpy(audio_wav).float()
+            audio_tensor = self.MaskedSpec.spec_masking(audio_wav, masks_num = 4, f_mask = 30)
+        else:
+            audio_tensor= torch.FloatTensor(audio_wav)
             
-        # soundfile.write('debug_fake.wav', audio_wav, sr)
-        audio_tensor= torch.FloatTensor(audio_wav)
-        return audio_tensor, label, spk, atk
+        # audio_tensor= torch.FloatTensor(audio_wav)
+        
+        return audio_tensor, label
     
     def apply_augment(self, wav):
         if not (self.use_musan or self.use_rir):
@@ -296,195 +236,5 @@ class EvalDataset(Dataset):
         x_inp= Tensor(X_pad)
 
         return x_inp,label
-
-
-def _ensure_2d_torch(wav: torch.Tensor) -> torch.Tensor:
-    # [T] -> [1, T]; [C, T] keep
-    if wav.dim() == 1:
-        wav = wav.unsqueeze(0)
-    return wav
-
-def _to_numpy_1d(x):
-    if isinstance(x, np.ndarray):
-        return x
-    x = x.detach().cpu()
-    if x.dim() == 2 and x.size(0) == 1:
-        x = x.squeeze(0)
-    return x.numpy()
-
-def compress_decompress_torchaudio(
-    wav,                      # np.ndarray [T] or torch.Tensor [T]/[C,T]
-    sr: int,
-    kind: str,                # "mp3" or "m4a"
-    bitrate_kbps: int,
-):
-    """
-    return type matches input type (numpy in -> numpy out, torch in -> torch out)
-    """
-    import torchaudio
-    from torchaudio.io import StreamWriter
-
-    is_numpy = isinstance(wav, np.ndarray)
-    if is_numpy:
-        wav = torch.from_numpy(wav)
-
-    wav = wav.detach().cpu().float()
-    wav = _ensure_2d_torch(wav)                 # [C, T]
-    C, T = wav.shape
-    wav_TC = wav.transpose(0, 1).contiguous()   # [T, C]
-
-    if kind == "mp3":
-        suffix = ".mp3"
-        container_format = "mp3"
-        codec = "libmp3lame"
-        bitrate = int(bitrate_kbps * 1000)
-    elif kind == "m4a":
-        suffix = ".m4a"
-        container_format = "ipod"   # 生成 m4a 常用；不行可改 "mp4"
-        codec = "aac"
-        bitrate = int(bitrate_kbps * 1000)
-    else:
-        raise ValueError(f"Unknown kind: {kind}")
-
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    tmp_path = tmp.name
-    tmp.close()
-
-    try:
-        writer = StreamWriter(tmp_path, format=container_format)
-        writer.add_audio_stream(
-            sample_rate=sr,
-            num_channels=C,
-            codec=codec,
-            bitrate=bitrate,
-        )
-        with writer.open():
-            writer.write_audio_chunk(0, wav_TC)
-
-        wav2, sr2 = torchaudio.load(tmp_path)   # [C, T2]
-        if sr2 != sr:
-            wav2 = torchaudio.functional.resample(wav2, sr2, sr)
-
-        # match length
-        if wav2.size(1) > T:
-            wav2 = wav2[:, :T]
-        elif wav2.size(1) < T:
-            wav2 = F.pad(wav2, (0, T - wav2.size(1)))
-
-        return _to_numpy_1d(wav2) if is_numpy else wav2
-
-    except Exception as e:
-        # ✅ 编码/解码失败（ffmpeg/codec 缺失等）就直接回退原始 wav，不让训练崩
-        return _to_numpy_1d(wav) if is_numpy else wav
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-class CompressionAugment:
-    def __init__(self, p=0.5, mp3_kbps=16, m4a_kbps=64):
-        self.p = float(p)
-        self.mp3_kbps = int(mp3_kbps)
-        self.m4a_kbps = int(m4a_kbps)
-
-    def __call__(self, wav, sr: int):
-        if random.random() > self.p:
-            return wav
-        if random.random() < 0.5:
-            return compress_decompress_torchaudio(wav, sr, "mp3", self.mp3_kbps)
-        else:
-            return compress_decompress_torchaudio(wav, sr, "m4a", self.m4a_kbps)
-
-
-
-class RandomCodecAug:
-    """
-    随机选 codec 做编码-解码增强（MP3 / OGG-OPUS / OGG-VORBIS / WEBM-OPUS）
-    """
-    def __init__(self, p=0.5):
-        self.p = float(p)
-
-    def _make_effector(self):
-        choice = random.choice(["mp3_vbr", "mp3_cbr", "ogg_opus", "ogg_vorbis", "webm_opus"])
-
-        if choice == "mp3_vbr":
-            q = random.randint(2, 8)
-            return AudioEffector(format="mp3", codec_config=CodecConfig(qscale=q), pad_end=True)
-
-        if choice == "mp3_cbr":
-            br = random.choice([16000, 24000, 32000, 64000])
-            return AudioEffector(format="mp3", codec_config=CodecConfig(bit_rate=br), pad_end=True)
-
-        if choice == "ogg_opus":
-            # 优先 libopus，失败回退 opus
-            try:
-                return AudioEffector(format="ogg", encoder="libopus", pad_end=True)
-            except Exception:
-                return AudioEffector(format="ogg", encoder="opus", pad_end=True)
-
-        if choice == "ogg_vorbis":
-            # 优先 libvorbis，失败回退 vorbis
-            try:
-                return AudioEffector(format="ogg", encoder="libvorbis", pad_end=True)
-            except Exception:
-                return AudioEffector(format="ogg", encoder="vorbis", pad_end=True)
-
-        # webm + opus：优先 libopus
-        try:
-            return AudioEffector(format="webm", encoder="libopus", pad_end=True)
-        except Exception:
-            return AudioEffector(format="webm", encoder="opus", pad_end=True)
-
-    @torch.no_grad()
-    def __call__(self, waveform, sample_rate: int):
-        import numpy as np
-        import torch
-        import torch.nn.functional as F
-
-        is_numpy = isinstance(waveform, np.ndarray)
-        if is_numpy:
-            waveform = torch.from_numpy(waveform)
-
-        if waveform.dtype == torch.float64:
-            waveform = waveform.float()
-
-        # 记录原始是否 1D（你的主流程就是 1D）
-        orig_1d = (waveform.dim() == 1)
-
-        if torch.rand(()) > self.p:
-            out = waveform
-            if orig_1d and out.dim() == 2 and out.shape[0] == 1:
-                out = out.squeeze(0)
-            return out.numpy() if is_numpy else out
-
-        # 统一成 [1, T]
-        if orig_1d:
-            waveform = waveform.unsqueeze(0)
-
-        if waveform.dim() != 2:
-            raise ValueError("waveform must be 1D or 2D.")
-
-        # 喂给 AudioEffector: (time, channel)
-        # 你这里 waveform 是 [1, T]，所以转成 [T, 1]
-        x = waveform.t().contiguous()
-        T0 = x.shape[0]
-
-        eff = self._make_effector()
-        y = eff.apply(x.cpu(), sample_rate)  # [T,1]
-
-        # pad/crop 回原长度
-        if y.shape[0] < T0:
-            y = F.pad(y, (0, 0, 0, T0 - y.shape[0]))
-        else:
-            y = y[:T0, :]
-
-        out = y.t()  # [1,T]
-
-        # ✅ 返回和输入一致：输入是 1D，就 squeeze 回 1D
-        if orig_1d:
-            out = out.squeeze(0)
-
-        return out.numpy() if is_numpy else out
-
 
 
