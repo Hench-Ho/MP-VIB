@@ -35,5 +35,10 @@ Download the WavLM models from [here](https://github.com/microsoft/unilm/tree/ma
 
 ## Inference
 ```
-$ python main.py
+$ python main.py \
+        --wavlm_path       wavlm/WavLM-Large.pt \
+        --model_path       checkpoints/mp_vib_best.pth \
+        --protocol_path    /path/to/eval_protocol.txt \
+        --database_path    /path/to/eval_flac_dir \
+        --output_path      scores.txt
 ```
